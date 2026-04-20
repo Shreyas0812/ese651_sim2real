@@ -5,6 +5,7 @@ from scipy.spatial.transform import Rotation as R
 
 # import pygame
 
+
 class Actor(nn.Module):
     def __init__(self, mlp_input_dim, actor_hidden_dims, num_actions, activation):
         super(Actor, self).__init__()
@@ -14,15 +15,18 @@ class Actor(nn.Module):
         actor_layers.append(activation())
         for layer_index in range(len(actor_hidden_dims)):
             if layer_index == len(actor_hidden_dims) - 1:
-                actor_layers.append(nn.Linear(actor_hidden_dims[layer_index], num_actions))
+                actor_layers.append(
+                    nn.Linear(actor_hidden_dims[layer_index], num_actions))
                 actor_layers.append(nn.Tanh())
             else:
-                actor_layers.append(nn.Linear(actor_hidden_dims[layer_index], actor_hidden_dims[layer_index + 1]))
+                actor_layers.append(
+                    nn.Linear(actor_hidden_dims[layer_index], actor_hidden_dims[layer_index + 1]))
                 actor_layers.append(activation())
         self.actor = nn.Sequential(*actor_layers)
 
     def forward(self, x):
         return self.actor(x)
+
 
 class SimpleRacingPolicy:
     def __init__(self, vehicle, model_path, params, device="cpu"):
@@ -45,27 +49,30 @@ class SimpleRacingPolicy:
         ], dtype=np.float32)
 
         # Create network
-        self.model = Actor(self.obs_dim, [512, 512, 256, 128], self.action_dim, nn.ELU).to(self.device)
+        self.model = Actor(
+            self.obs_dim, [512, 512, 256, 128], self.action_dim, nn.ELU).to(self.device)
         checkpoint = torch.load(model_path, map_location=self.device)
         # Load checkpoint
-        actor_state_dict = {k: v for k, v in checkpoint["model_state_dict"].items() if "actor" in k}
+        actor_state_dict = {
+            k: v for k, v in checkpoint["model_state_dict"].items() if "actor" in k}
         self.model.load_state_dict(actor_state_dict, strict=True)
         # Compile network
         self.model = torch.compile(self.model)
         self.model.eval()
         # Warm-up network
         with torch.no_grad():
-            dummy_obs = torch.zeros(self.obs_dim, dtype=torch.float32, device=self.device)
+            dummy_obs = torch.zeros(
+                self.obs_dim, dtype=torch.float32, device=self.device)
             _ = self.model(dummy_obs)
 
         self.idx_wp = params["initial_waypoint"]
-
 
         # Set the maximum body rate on each axis (this is hand selected), rad/s
         self.max_roll_br = params["max_roll_br"]
         self.max_pitch_br = params["max_pitch_br"]
         self.max_yaw_br = params["max_yaw_br"]
-        self.pass_gate_thr = params.get("pass_gate_thr", 0.10)  # Default value if not in params
+        # Default value if not in params
+        self.pass_gate_thr = params.get("pass_gate_thr", 0.10)
 
     def update(self, state):
         """
@@ -90,15 +97,23 @@ class SimpleRacingPolicy:
         rot_curr = R.from_quat(quat_curr, scalar_first=True).as_matrix()
         rot_next = R.from_quat(quat_next, scalar_first=True).as_matrix()
 
-        pose_drone_wrt_gate = self._subtract_frame_transforms(wp_curr_pos, rot_curr, pos_drone)
-        if np.linalg.norm(pose_drone_wrt_gate) < self.gate_side and pose_drone_wrt_gate[0] < self.pass_gate_thr:
+        pose_drone_wrt_gate = self._subtract_frame_transforms(
+            wp_curr_pos, rot_curr, pos_drone)
+        # Check gate passing conditions: distance, x-position, and y/z boundaries
+        if (np.linalg.norm(pose_drone_wrt_gate) < self.gate_side and
+            pose_drone_wrt_gate[0] < 0.0 and
+            pose_drone_wrt_gate[0] > -0.1 and
+            np.abs(pose_drone_wrt_gate[1]) < self.gate_side / 2 and
+                np.abs(pose_drone_wrt_gate[2]) < self.gate_side / 2):
             self.idx_wp = (self.idx_wp + 1) % self.waypoints.shape[0]
 
         verts_curr = self.local_square @ rot_curr.T + wp_curr_pos
         verts_next = self.local_square @ rot_next.T + wp_next_pos
 
-        waypoint_pos_b_curr = self._subtract_frame_transforms(pos_drone, rot_drone, verts_curr).reshape(4, 3)
-        waypoint_pos_b_next = self._subtract_frame_transforms(pos_drone, rot_drone, verts_next).reshape(4, 3)
+        waypoint_pos_b_curr = self._subtract_frame_transforms(
+            pos_drone, rot_drone, verts_curr).reshape(4, 3)
+        waypoint_pos_b_next = self._subtract_frame_transforms(
+            pos_drone, rot_drone, verts_next).reshape(4, 3)
 
         obs = [
             torch.from_numpy(lin_vel_drone).float().flatten(),
@@ -115,9 +130,9 @@ class SimpleRacingPolicy:
 
         cmd_thrust = 0.5 * (actions[0] + 1.0)
 
-        roll_br  = actions[1] * self.max_roll_br
+        roll_br = actions[1] * self.max_roll_br
         pitch_br = actions[2] * self.max_pitch_br
-        yaw_br   = actions[3] * self.max_yaw_br
+        yaw_br = actions[3] * self.max_yaw_br
 
         control_input = {'cmd_thrust': cmd_thrust,
                          'cmd_w': np.array([roll_br, pitch_br, yaw_br])}
